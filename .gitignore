@@ -2,3 +2,4 @@
 /bin
 
 run_with_sudo.sh
+.env

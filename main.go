@@ -3,15 +3,19 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"network_packet_sniffer/parse"
+	"time"
 	"unsafe"
+
+	"network_packet_sniffer/filter"
+	"network_packet_sniffer/parse"
 )
 
 func main() {
+	// TODO change this to be a command line argument
 	iface := "en0"
 
 	fd, err := openBPF()
@@ -37,37 +41,54 @@ func main() {
 	bufSize := 4096
 	buf := make([]byte, bufSize)
 
+	filter := filter.PacketFilter{
+		// Protocols:      []uint8{6, 17}, // TCP and UDP
+		Protocols:      []uint8{}, // TCP and UDP
+		SourceIPs:      []net.IP{},
+		DestinationIPs: []net.IP{},
+		// SourceIPs:        []net.IP{net.ParseIP(os.Getenv("SRC_IP"))},
+		// DestinationIPs:   []net.IP{net.ParseIP("DEST_IP")},
+		SourcePorts:      []uint16{},
+		DestinationPorts: []uint16{},
+	}
+
 	for {
+		// NOTE that n is the number of bytes successfully read
 		n, err := readWithRetry(fd, buf)
-		ethernetHeader := parse.EthernetHeader{}
+		fmt.Printf("Read %d bytes from the package\n", n)
 		if err != nil {
 			log.Fatalf("Failed to read from BPF: %v", err)
-		} else if len(buf[:n]) != 0 { // there is some network package of interest
-			fmt.Printf("Captured packet: %x\n", buf[:n])
-			ethernetHeader = parse.ParseEthernetHeader(buf[:14])
-			fmt.Printf("Ethernet Header: %+v\n", ethernetHeader)
 		}
+		if n > 0 && filter.Match(buf[:n]) { // there is some network package of interest
+			fmt.Printf("Captured packet: %x\n", buf[:n])
+			ethernetHeader := parse.ParseEthernetHeader(buf[:14])
+			fmt.Printf("Ethernet Header: %+v\n", ethernetHeader)
 
-		if ethernetHeader.EtherType == 0x0800 { // IPv4
-			ipv4Header := parse.ParseIPv4Header(buf[14:34])
-			fmt.Printf("IPv4 Header: %+v\n", ipv4Header)
+			if ethernetHeader.EtherType == 0x0800 { // IPv4
+				ipv4Header := parse.ParseIPv4Header(buf[14:])
+				fmt.Printf("IPv4 Header: %+v\n", ipv4Header)
+				ipHeaderLength := int(ipv4Header.VersionIHL & 0x0F * 4)
+				payloadOffset := 14 + ipHeaderLength
 
-			if ipv4Header.Protocol == 6 { // TCP
-				tcpHeader := parse.ParseTCPHeader(buf[34:54])
-				fmt.Printf("TCP Header: %+v\n", tcpHeader)
-			} else if ipv4Header.Protocol == 17 { // UDP
-				udpHeader := parse.ParseUDPHeader(buf[34:42])
-				fmt.Printf("UDP Header: %+v\n", udpHeader)
+				if ipv4Header.Protocol == 6 { // TCP
+					tcpHeader := parse.ParseTCPHeader(buf[payloadOffset:])
+					fmt.Printf("TCP Header: %+v\n", tcpHeader)
+				} else if ipv4Header.Protocol == 17 { // UDP
+					udpHeader := parse.ParseUDPHeader(buf[payloadOffset:])
+					fmt.Printf("UDP Header: %+v\n", udpHeader)
+				}
 			}
+		} else {
+			// No data read, add a small delay before retrying
+			fmt.Printf("Retrying the read and parse logic. Failed with err: %v and match res: %v\n", err, filter.Match(buf[:n]))
+			time.Sleep(1000 * time.Millisecond)
 		}
 	}
 }
 
 func readWithRetry(fd int, buf []byte) (int, error) {
 	for {
-		// fmt.Printf("Trying to open file descriptor %d\n", fd)
 		n, err := syscall.Read(fd, buf)
-		// fmt.Printf("Error: %v\n", err)
 		if err != nil {
 			if err == syscall.EINTR {
 				// Interrupted system call, retry reading

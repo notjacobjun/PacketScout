@@ -67,11 +67,12 @@ func ParseIPv4Header(data []byte) IPv4Header {
 
 func ParseTCPHeader(data []byte) TCPHeader {
 	return TCPHeader{
-		SrcPort:       binary.BigEndian.Uint16(data[0:2]),
-		DestPort:      binary.BigEndian.Uint16(data[2:4]),
-		SeqNum:        binary.BigEndian.Uint32(data[4:8]),
-		AckNum:        binary.BigEndian.Uint32(data[8:12]),
-		DataOffsetRes: data[12],
+		SrcPort:  binary.BigEndian.Uint16(data[0:2]),
+		DestPort: binary.BigEndian.Uint16(data[2:4]),
+		SeqNum:   binary.BigEndian.Uint32(data[4:8]),
+		AckNum:   binary.BigEndian.Uint32(data[8:12]),
+		// TODO double check if this is the right offset (or if necessary at all)
+		DataOffsetRes: data[12] >> 4, // Dataoffset is the top 4 bits
 		Flags:         data[13],
 		Window:        binary.BigEndian.Uint16(data[14:16]),
 		Checksum:      binary.BigEndian.Uint16(data[16:18]),
